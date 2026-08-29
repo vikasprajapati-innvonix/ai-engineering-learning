@@ -1,0 +1,21 @@
+History of LangChain
+
+LangChain is an open-source framework designed to make it easier for developers to build applications powered by Large Language Models (LLMs). It was created to solve a common problem: using an LLM directly is simple for basic questions, but building a useful application around an LLM often requires connecting it with external data, tools, memory, APIs, databases, and other systems.
+
+LangChain was created by Harrison Chase in 2022. It started as a small Python project and was initially focused on connecting language models with different components needed to build AI applications. As interest in ChatGPT and generative AI increased, LangChain quickly gained popularity among developers and AI researchers.
+
+In its early stages, LangChain provided abstractions for working with prompts, language models, chains, agents, memory, and document retrieval. One of its main ideas was the concept of a "chain." A chain allows multiple operations to be connected together. For example, an application could take a user's question, send it to a language model, process the response, and then use that response in another operation.
+
+Another important feature was prompt management. LangChain introduced reusable prompt templates that allowed developers to dynamically insert user information into prompts instead of writing the complete prompt manually every time. This made LLM applications easier to organize and maintain.
+
+LangChain also became popular for Retrieval-Augmented Generation (RAG) applications. RAG allows an LLM to retrieve information from external documents or databases before generating an answer. LangChain provided components for loading documents, splitting them into smaller pieces, generating embeddings, storing vectors in vector databases, retrieving relevant information, and passing that information to an LLM.
+
+Agents became another major part of LangChain. Instead of following a fixed sequence of operations, an agent can decide which tool it should use based on the user's request. For example, an agent might decide to search a database, call an API, perform a calculation, or use another tool before producing the final answer.
+
+As LangChain grew, its architecture evolved. The project introduced LangChain Expression Language (LCEL), which provided a more flexible way to compose components together. Later, LangGraph was introduced for building more complex, stateful, and controllable agent workflows. LangSmith was also developed as a platform for tracing, debugging, evaluating, and monitoring LLM applications.
+
+Over time, LangChain expanded beyond its original Python implementation and became available for JavaScript and TypeScript developers as well. The ecosystem also grew to support many different LLM providers, embedding models, vector databases, document loaders, and external tools.
+
+Today, LangChain is commonly used for building LLM-powered applications such as chatbots, RAG systems, AI agents, document-question-answering systems, and tool-using AI applications.
+
+The main purpose of LangChain has remained consistent: it provides reusable building blocks that help developers connect language models with data, tools, and application logic, making it easier to build practical AI applications rather than using an LLM as a standalone text-generation tool.
