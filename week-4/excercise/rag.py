@@ -10,27 +10,29 @@
 # 5. Augmentation
 #        ↓
 # 6. Generation
-from langchain_core.prompts import MessagesPlaceholder
 import warnings
+
 from dotenv import load_dotenv
-warnings.filterwarnings('ignore')
+from langchain_core.prompts import MessagesPlaceholder
+
+warnings.filterwarnings("ignore")
 
 import asyncio
 from pathlib import Path
-from langchain_core import chat_history
-from langchain_core.messages import AIMessage, HumanMessage
+
 from langchain_community.document_loaders import PDFPlumberLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
+from langchain_core import chat_history
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnableParallel
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.documents import Document
-
+from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.spinner import Spinner
 
 load_dotenv()
@@ -40,12 +42,14 @@ embedding = MistralAIEmbeddings(model="mistral-embed")
 llm = ChatMistralAI(model="mistral-medium-3-5", max_tokens=500)
 output_parser = StrOutputParser()
 
-def load_document(file_path:str):
+
+def load_document(file_path: str):
     loader = PDFPlumberLoader(file_path=file_path)
     docs = loader.load()
     return docs
 
-def text_splitter(docs: list[Document]) -> list[Document]: 
+
+def text_splitter(docs: list[Document]) -> list[Document]:
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=150,
@@ -53,24 +57,28 @@ def text_splitter(docs: list[Document]) -> list[Document]:
     splited_docs = text_splitter.split_documents(docs)
     return splited_docs
 
+
 def embedding_vectorstore(splited_docs: list[Document]):
-    vector_store = FAISS.from_documents(
-        documents=splited_docs,
-        embedding=embedding
-    )
+    vector_store = FAISS.from_documents(documents=splited_docs, embedding=embedding)
 
     return vector_store
 
+
 def augmentation(args: dict):
-    query, retrieved_docs, chat_history = args["query"], args["retrieved_docs"], args["chat_history"]
+    query, retrieved_docs, chat_history = (
+        args["query"],
+        args["retrieved_docs"],
+        args["chat_history"],
+    )
     context = "\n\n".join([doc.page_content for doc in retrieved_docs])
-    
+
     # print(f"\n{'=' * 60}\ncontext: {context}\n{'=' * 60}\n")
 
-    prompt_template = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """
+    prompt_template = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
             You are an HR AI assistant responsible for answering employee questions about company HR policies, leave, attendance, benefits, and related workplace guidelines.
 
             Use the provided context from the company's HR policy documents to answer the user's question.
@@ -89,19 +97,19 @@ def augmentation(args: dict):
 
             Context:
             {context}
-            """
-        ),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{query}"),
-    ])
+            """,
+            ),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{query}"),
+        ]
+    )
 
-    prompt = prompt_template.invoke({
-        "query": query,
-        "context": context,
-        "chat_history": chat_history
-    })
+    prompt = prompt_template.invoke(
+        {"query": query, "context": context, "chat_history": chat_history}
+    )
 
     return prompt
+
 
 def debug_documents(docs: list[Document]) -> list[Document]:
     print("\n========== DEBUG ==========")
@@ -113,10 +121,12 @@ def debug_documents(docs: list[Document]) -> list[Document]:
         print(f"DOCUMENT / PAGE: {i}")
         print("=" * 80)
         print(doc.page_content)
-                
+
     return docs
 
+
 console = Console()
+
 
 async def chat_loop_app(rag_chain):
     chat_history = []
@@ -126,41 +136,46 @@ async def chat_loop_app(rag_chain):
         if query.strip().lower() == "exit":
             break
 
+        chat_history.append(HumanMessage(query))
+
         console.print("[bold green]AI:[/bold green]")
 
-        ai_response = ""    
+        ai_response = ""
         with Live(console=console, refresh_per_second=12) as live:
             live.update(Spinner("dots", text="AI is thinking..."))
-            async for chunk in rag_chain.astream({"query": query, "chat_history": chat_history}):
+            async for chunk in rag_chain.astream(
+                {"query": query, "chat_history": chat_history}
+            ):
                 ai_response += chunk
                 live.update(Markdown(f"**AI:** {ai_response}"))
+
+        chat_history.append(AIMessage(ai_response))
+
 
 async def chat_loop(rag_chain):
     print("Welcome to the HR Policy Chat Bot!")
     print("Type 'exit' to quit.\n")
 
-    chat_history  = []
+    chat_history = []
     while True:
         query = input("\nYou: ")
         if query.strip().lower() == "exit":
             break
-        
-        response = rag_chain.astream({
-            "query": query,
-            "chat_history": chat_history
-        })
+
+        response = rag_chain.astream({"query": query, "chat_history": chat_history})
 
         chat_history.append(HumanMessage(query))
-        
-        ai_response = ''
+
+        ai_response = ""
         print("AI: ", end="", flush=True)
         async for chunk in response:
             ai_response += chunk
-            print(chunk,end="",flush=True)
-        
+            print(chunk, end="", flush=True)
+
         chat_history.append(AIMessage(ai_response))
 
-async def main():    
+
+async def main():
     if not PDF_PATH.exists():
         raise FileNotFoundError(f"PDF not found at: {PDF_PATH}")
 
@@ -176,19 +191,19 @@ async def main():
 
     rag_chain = (
         RunnableParallel(
-            query=RunnableLambda(lambda x: x['query']),
-            chat_history=RunnableLambda(lambda x: x['chat_history']),
-            retrieved_docs= RunnableLambda(lambda x: x['query']) | retriever,
+            query=RunnableLambda(lambda x: x["query"]),
+            chat_history=RunnableLambda(lambda x: x["chat_history"]),
+            retrieved_docs=RunnableLambda(lambda x: x["query"]) | retriever,
         )
         | RunnableLambda(augmentation)
         | llm
         | output_parser
-    ) 
+    )
 
-    await chat_loop_app(rag_chain)   
+    await chat_loop_app(rag_chain)
+
 
 asyncio.run(main())
-
 
 
 # ## Easy (single fact, likely all in one chunk)
