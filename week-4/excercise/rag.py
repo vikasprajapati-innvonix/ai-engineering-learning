@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 load_dotenv()
 
 PDF_PATH = Path(__file__).resolve().parent / "HR_POLICY_1.6.2.pdf"
-PERSIST_DIR = Path(__file__).resolve().parent / "hr_policy_db"
+PERSIST_DIR = Path(__file__).resolve().parent / "chroma" / "hr_policy_db"
 COLLECTION_NAME = "hr_policy"
 
 # embedding = MistralAIEmbeddings(model="mistral-embed")
