@@ -1,13 +1,13 @@
 - Chat Application: 
 
-  - sqlite persistence
-  - multiple threads
-  - resume chat 
+  - sqlite persistence [done]
+  - multiple threads [done]
+  - resume chat [done]
+  - short term memory [done]
+  - long term memory [done]
+  - tools [done]
+  - mcp [done]
   - HITL 
-  - short term memory
-  - long term memory
-  - tools
-  - mcp
   - context window problem (trimming,summarization)
  
  

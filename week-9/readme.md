@@ -1,0 +1,1 @@
+Check week-6 task; created exchange_rate_conversion_server using fastMCP and also connected with LLM

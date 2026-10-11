@@ -1,4 +1,5 @@
 {
   "venvPath": "/home/vikas/Coding_play_ground/AI/ai-engineering-learning",
-  "venv": ".venv"
+  "venv": ".venv",
+  "extraPaths": ["chat-application"]
 }
