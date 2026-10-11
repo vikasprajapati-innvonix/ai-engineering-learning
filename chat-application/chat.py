@@ -1,27 +1,17 @@
 import streamlit as st
-from db_operation import (
-    create_thread,
-    get_threads,
-    init_db,
-)
-from graph import (
-    get_thread_messages,
-    stream_workflow,
-)
-
-# =========================================================
-# One-time DB init (idempotent: CREATE TABLE IF NOT EXISTS)
-# =========================================================
+from db_operation import create_thread, get_threads, init_db
+from graph import get_pending_approval, get_thread_messages, stream_workflow
 
 init_db()
 
+ss = st.session_state
+ss.setdefault("thread_id", None)
+ss.setdefault("pending_decision", None)  # "approve" | "reject" | None
 
-# =========================================================
-# Session State
-# =========================================================
 
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = None
+def switch_thread(thread_id):
+    ss.thread_id = thread_id
+    ss.pending_decision = None  # never carry a decision across threads
 
 
 # =========================================================
@@ -30,101 +20,76 @@ if "thread_id" not in st.session_state:
 
 st.sidebar.title("Chats")
 
-
-# ---------------------------------------------------------
-# New Chat
-# ---------------------------------------------------------
-
-if st.sidebar.button(
-    "New Chat",
-    icon=":material/add:",
-    use_container_width=True,
-):
-    st.session_state.thread_id = None
+if st.sidebar.button("New Chat", icon=":material/add:", use_container_width=True):
+    switch_thread(None)
     st.rerun()
-
 
 st.sidebar.divider()
 st.sidebar.write("Threads")
 
-
-# ---------------------------------------------------------
-# Get Threads
-# ---------------------------------------------------------
-
-threads = get_threads()
-
-
-# ---------------------------------------------------------
-# Display Threads
-# ---------------------------------------------------------
-
-for thread in threads:
-    thread_id = thread["thread_id"]
-
-    title = thread["title"] or "Untitled"
-
-    is_active = thread_id == st.session_state.thread_id
-
+for thread in get_threads():
+    tid = thread["thread_id"]
     if st.sidebar.button(
-        title,
-        type="primary" if is_active else "secondary",
-        key=f"thread_{thread_id}",
+        thread["title"] or "Untitled",
+        type="primary" if tid == ss.thread_id else "secondary",
+        key=f"thread_{tid}",
         use_container_width=True,
     ):
-        st.session_state.thread_id = thread_id
-
+        switch_thread(tid)
         st.rerun()
 
-
 # =========================================================
-# Main Chat
+# Main
 # =========================================================
 
 st.title("Chat Application")
 
+# --- History (from the checkpointer) ---------------------
+if ss.thread_id is not None:
+    for m in get_thread_messages(ss.thread_id):
+        if m.type == "human":
+            st.chat_message("user").write(m.content)
+        elif m.type == "ai" and m.content:  # skip tool-call-only turns
+            st.chat_message("assistant").write(m.content)
 
-# ---------------------------------------------------------
-# Load Current Conversation
-# ---------------------------------------------------------
+# --- Approval UI (derived from graph state) --------------
+pending_approval = None
+if ss.thread_id is not None and ss.pending_decision is None:
+    pending_approval = get_pending_approval(ss.thread_id)
 
-if st.session_state.thread_id is not None:
-    messages = get_thread_messages(st.session_state.thread_id)
+if pending_approval:
+    with st.chat_message("assistant"):
+        st.warning(pending_approval)
+        col1, col2 = st.columns(2)
+        if col1.button("Approve", key=f"approve_{ss.thread_id}"):
+            ss.pending_decision = "approve"
+            st.rerun()
+        if col2.button("Reject", key=f"reject_{ss.thread_id}"):
+            ss.pending_decision = "reject"
+            st.rerun()
 
-    for message in messages:
-        if message.type == "human":
-            st.chat_message("user").write(message.content)
+# --- Single chat input -----------------------------------
+query = st.chat_input(
+    "Type your message here...",
+    disabled=bool(pending_approval),
+)
 
-        elif message.type == "ai":
-            st.chat_message("assistant").write(message.content)
-
+decision = ss.pending_decision
 
 # =========================================================
-# Chat Input
+# Run graph
 # =========================================================
 
-query = st.chat_input("Type your message here...")
+if query or decision:
+    if ss.thread_id is None:
+        ss.thread_id = create_thread(query)["thread_id"]
 
+    if query:
+        st.chat_message("user").write(query)
 
-if query:
-    # -----------------------------------------------------
-    # Create thread on first message
-    # -----------------------------------------------------
+    ss.pending_decision = None  # consume before streaming
 
-    if st.session_state.thread_id is None:
-        thread = create_thread(query)
-
-        st.session_state.thread_id = thread["thread_id"]
-
-    # -----------------------------------------------------
-    # Show user message
-    # -----------------------------------------------------
-
-    st.chat_message("user").write(query)
-
-    # -----------------------------------------------------
-    # Stream assistant
-    # -----------------------------------------------------
+    needs_rerun = False
 
     with st.chat_message("assistant"):
         status = st.status("Thinking...", expanded=True)
@@ -133,22 +98,25 @@ if query:
 
         for event in stream_workflow(
             message=query,
-            thread_id=st.session_state.thread_id,
+            thread_id=ss.thread_id,
+            decision=decision,
         ):
             if event["type"] == "status":
                 status.write(event["text"])
-
             elif event["type"] == "reasoning":
                 status.write(f"💭 {event['text']}")
-
             elif event["type"] == "token":
                 answer += event["text"]
                 answer_placeholder.markdown(answer)
+            elif event["type"] == "approval":
+                needs_rerun = True
 
-        status.update(label="Done", state="complete", expanded=False)
+        status.update(
+            label="Approval required" if needs_rerun else "Done",
+            state="complete",
+            expanded=False,
+        )
 
-    # -----------------------------------------------------
-    # Reload
-    # -----------------------------------------------------
-
-    st.rerun()
+    # Rerun only so the approval buttons render; history reloads from DB.
+    if needs_rerun:
+        st.rerun()

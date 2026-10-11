@@ -3,13 +3,15 @@ from contextlib import contextmanager
 
 from config import CHAT_DB, USER_ID
 from dotenv import load_dotenv
+from hitl import approval_node, route_after_approval, route_after_chat
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import MessagesState
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
+from langgraph.types import Command
 from long_term_memory import Memory, open_store
 from long_term_memory import builder as memory_builder
 from mcp_tool_bind import get_all_available_tools
@@ -35,6 +37,7 @@ RECURSION_LIMIT = 15  # caps the chat <-> tools loop
 # -------------------------
 class State(MessagesState):
     memory_context: str  # overwritten every turn, never accumulates
+    approval: str
 
 
 # -------------------------
@@ -42,6 +45,7 @@ class State(MessagesState):
 # -------------------------
 BASE_SYSTEM_PROMPT = "You are a helpful assistant."
 LOAD_MEMORY_NODE = "load_memory"
+APPROVAL_NODE = "approval"
 CHAT_NODE = "chat_node"
 TOOLS_NODE = "tools"
 
@@ -98,6 +102,7 @@ def build_graph(tools: list) -> StateGraph:
 
     g = StateGraph(State)
     g.add_node(LOAD_MEMORY_NODE, load_memory)
+    g.add_node(APPROVAL_NODE, approval_node)
     g.add_node(CHAT_NODE, chat_node)
     # handle_tool_errors=True: if a tool raises (DNS error, timeout, etc.)
     # LangGraph catches it and returns a ToolMessage with the error text,
@@ -106,7 +111,17 @@ def build_graph(tools: list) -> StateGraph:
 
     g.add_edge(START, LOAD_MEMORY_NODE)
     g.add_edge(LOAD_MEMORY_NODE, CHAT_NODE)
-    g.add_conditional_edges(CHAT_NODE, tools_condition)  # -> "tools" or END
+    g.add_conditional_edges(
+        CHAT_NODE,
+        route_after_chat,
+        {"__end__": END, "tools": TOOLS_NODE, "approval": APPROVAL_NODE},
+    )
+    # After approval_node: approved → run the tool, rejected → back to chat
+    g.add_conditional_edges(
+        APPROVAL_NODE,
+        route_after_approval,
+        {"tools": TOOLS_NODE, "chat_node": CHAT_NODE},
+    )
     g.add_edge(TOOLS_NODE, CHAT_NODE)
 
     return g
@@ -126,7 +141,11 @@ def compile_graph(store=None, tools=None):
         workflow = build_graph(tools or []).compile(
             checkpointer=checkpointer, store=store
         )
-        print(workflow.get_graph().draw_ascii())
+        
+        # Store graph image in file
+        # with open("./graph.png", "wb") as f:
+        #     f.write(workflow.get_graph().draw_mermaid_png())
+        
         yield workflow
     finally:
         conn.close()
@@ -153,14 +172,39 @@ def get_thread_messages(thread_id: str):
         return state.values.get("messages", [])
 
 
+def _interrupt_text(value) -> str:
+    if isinstance(value, dict):
+        return value.get("question") or str(value)
+    return str(value)
+
+def get_pending_approval(thread_id: str) -> str | None:
+    """
+    Read graph state from the checkpointer only — no need to load tools or
+    open the memory store just to check if an interrupt is pending.
+    """
+    with compile_graph() as workflow:
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = workflow.get_state(config)
+        for task in snapshot.tasks:
+            for intr in task.interrupts:
+                return _interrupt_text(intr.value)
+    return None
+
 # -------------------------
 # Stream Chat
 # -------------------------
-def stream_workflow(message: str, thread_id: str):
-    """Sync generator — compatible directly with st.write_stream()."""
+def stream_workflow(message: str | None, thread_id: str, decision=None):
+    if decision is not None:
+        graph_input = Command(resume=decision)
+    elif message:
+        graph_input = {"messages": [HumanMessage(content=message)]}
+    else:
+        return
+
     tools = load_tools()
+
     with open_store() as store, compile_graph(store, tools) as workflow:
-        config = {
+        config: RunnableConfig = {
             "recursion_limit": RECURSION_LIMIT,
             "configurable": {
                 "thread_id": thread_id,
@@ -168,35 +212,43 @@ def stream_workflow(message: str, thread_id: str):
             },
             "callbacks": [ToolLogger()],
         }
+
         for mode, chunk in workflow.stream(
-            {"messages": [HumanMessage(content=message)]},
+            graph_input,
             config=config,
             stream_mode=["updates", "messages"],
         ):
             if mode == "messages":
                 message_chunk, metadata = chunk
-
-                if metadata.get("langgraph_node") != CHAT_NODE:
-                    continue
-
-                if message_chunk.content:
-                    yield {
-                        "type": "token",
-                        "text": message_chunk.content,
-                    }
+                if (
+                    metadata.get("langgraph_node") == CHAT_NODE
+                    and message_chunk.content
+                ):
+                    yield {"type": "token", "text": message_chunk.content}
 
             elif mode == "updates":
                 for node_name, node_update in chunk.items():
-                    # Show which graph node is running
-                    yield {
-                        "type": "status",
-                        "text": f"Running: {node_name}",
-                    }
+                    if node_name == "__interrupt__":
+                        for intr in node_update:
+                            yield {
+                                "type": "approval",
+                                "text": _interrupt_text(intr.value),
+                            }
+                        continue
+
+                    yield {"type": "status", "text": f"Running: {node_name}"}
+
+                    if not node_update:
+                        continue
 
                     for msg in node_update.get("messages", []):
                         reasoning = msg.additional_kwargs.get("reasoning_content")
                         if reasoning:
-                            yield {
-                                "type": "reasoning",
-                                "text": reasoning,
-                            }
+                            yield {"type": "reasoning", "text": reasoning}
+
+        # Safety-net: also check state after the stream ends in case the
+        # __interrupt__ update was not emitted mid-stream.
+        snapshot = workflow.get_state(config)
+        for task in snapshot.tasks:
+            for intr in task.interrupts:
+                yield {"type": "approval", "text": _interrupt_text(intr.value)}
