@@ -16,17 +16,17 @@ PROJECT_ABSOLUTE_PATH = os.environ["PROJECT_ABSOLUTE_PATH"]
 
 def create_mcp_clients():
     task_server_transport = StdioTransport(
-        command=(f"{PROJECT_ABSOLUTE_PATH}/ai-engineering-learning/.venv/bin/python"),
+        command=(f"{PROJECT_ABSOLUTE_PATH}/.venv/bin/python"),
         args=[
-            f"{PROJECT_ABSOLUTE_PATH}/ai-engineering-learning/chat-application/MCP/task_server.py"
+            f"{PROJECT_ABSOLUTE_PATH}/chat-application/MCP/task_server.py"
         ],
     )
     task_manager_client = Client(transport=task_server_transport)
 
     exchange_server_transport = StdioTransport(
-        command=(f"{PROJECT_ABSOLUTE_PATH}/ai-engineering-learning/.venv/bin/python"),
+        command=(f"{PROJECT_ABSOLUTE_PATH}/.venv/bin/python"),
         args=[
-            f"{PROJECT_ABSOLUTE_PATH}/ai-engineering-learning/chat-application/MCP/exchange_rate_conversion_server.py"
+            f"{PROJECT_ABSOLUTE_PATH}/chat-application/MCP/exchange_rate_conversion_server.py"
         ],
     )
     exchange_rate_converter_client = Client(transport=exchange_server_transport)
